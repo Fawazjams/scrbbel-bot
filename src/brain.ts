@@ -2,6 +2,29 @@
 // bid choice, play/hold. Original implementation for the SCRBBEL bot.
 import { BAG_COUNTS, LETTER_VALUE, VOWEL, partitionValue, formable, bestPartition, type Rack } from "./words.js";
 
+// Tunable parameters (overridable via PARAMS_JSON env or setParams()).
+export const P = {
+  kMult: 1.07, // future tiles = kMult * expected wins
+  kMax: 13,
+  incomeFrac: 0.47, // expected word income counted into budget
+  spendMult: 1.14, // bid scale used in spend model
+  lamMult: 1.08,
+  bigTableLam: 0.8, // lambda scale at 7+ seats
+  topPremium: 1.25, // top rival bid ~= paid * topPremium + 1
+  holdMargin: 2.7, // play word only if it beats holding by this
+  coinBonus: 0.32, // value of reward as coins (x lambda)
+  fpShade: 1, // first-price: 1 = optimize vs prices
+  partTopN: 6,
+};
+export function setParams(o: Partial<typeof P>) {
+  Object.assign(P, o);
+}
+if (process.env.PARAMS_JSON) {
+  try {
+    setParams(JSON.parse(process.env.PARAMS_JSON));
+  } catch {}
+}
+
 export interface Rival {
   botId: bigint;
   balance: number;
@@ -55,7 +78,7 @@ export function futuresK(v: View): number {
   const seats = v.rivals.length + 1;
   const winRate = (v.myWins + 1.5) / (v.auctionsDone + seats * 1.5);
   const expWins = winRate * R;
-  return Math.max(0, Math.min(Math.round(1.07 * expWins), 13, R));
+  return Math.max(0, Math.min(Math.round(P.kMult * expWins), P.kMax, R));
 }
 
 export class Sampler {
@@ -72,9 +95,9 @@ export class Sampler {
       const f = this.k > 0 ? (sampleFuture(unseen, this.k) as Int8Array) : new Int8Array(26);
       this.futures.push(f);
       for (let L = 0; L < 26; L++) tmp[L] = rack[L] + f[L];
-      const without = partitionValue(tmp, 6);
+      const without = partitionValue(tmp, P.partTopN);
       tmp[letter]++;
-      const withL = partitionValue(tmp, 6);
+      const withL = partitionValue(tmp, P.partTopN);
       this.sumWith += withL;
       this.sumWithout += without;
       this.n++;
@@ -93,16 +116,15 @@ const PRIOR_PRICES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
 // Solve lambda (points per coin) so that expected future spend ~= budget.
 export function solveLambda(v: View, curValue: number, ep: number): number {
   const R = v.futureAuctions + 1;
-  const budget = v.balance + 0.47 * ep * (v.futureAuctions / Math.max(1, v.totalAuctions));
+  const budget = v.balance + P.incomeFrac * ep * (v.futureAuctions / Math.max(1, v.totalAuctions));
   const vs = v.vHist.length >= 6 ? v.vHist.slice(-30) : [...v.vHist, curValue, 3, 2, 5, 1, 6, 0, 4];
   const ps = v.prices.length >= 8 ? v.prices.slice(-40) : [...v.prices, ...PRIOR_PRICES];
   // paid = runner-up bid; the bid we must beat (top rival) is higher.
-  const PREM = Number(process.env.TOP_PREMIUM ?? 1.25);
   const spend = (lam: number) => {
     let tot = 0;
     for (const x of vs) {
-      const b = (1.14 * x) / lam;
-      for (const p of ps) if (b > p * PREM + 1) tot += p;
+      const b = (P.spendMult * x) / lam;
+      for (const p of ps) if (b > p * P.topPremium + 1) tot += p;
     }
     return (R * tot) / (vs.length * ps.length);
   };
@@ -115,8 +137,8 @@ export function solveLambda(v: View, curValue: number, ep: number): number {
     if (spend(Math.exp(mid)) > budget) lo = mid;
     else hi = mid;
   }
-  let lam = Math.exp((lo + hi) / 2) * 1.08;
-  if (v.rivals.length + 1 >= 7) lam *= 0.8;
+  let lam = Math.exp((lo + hi) / 2) * P.lamMult;
+  if (v.rivals.length + 1 >= 7) lam *= P.bigTableLam;
   return lam;
 }
 
@@ -192,7 +214,7 @@ export function playOrHold(
   }
   hold /= futures.length;
   let bestW: string | null = null;
-  let bestGain = 2.7;
+  let bestGain = P.holdMargin;
   for (const c of top) {
     let play = 0;
     for (const f of futures) {
@@ -200,7 +222,7 @@ export function playOrHold(
       for (let i = 0; i < c.word.length; i++) tmp[c.word.charCodeAt(i) - 65]--;
       play += partitionValue(tmp, 6);
     }
-    play = play / futures.length + c.reward * (1 + 0.32 * lam);
+    play = play / futures.length + c.reward * (1 + P.coinBonus * lam);
     const gain = play - hold;
     if (gain > bestGain) {
       bestGain = gain;
