@@ -223,7 +223,7 @@ function onAuction(a: any) {
   const refine = () => {
     try {
       const now = Date.now();
-      if (now < deadline - 40 && sampler.n < 96) {
+      if (now < deadline - 150 && sampler.n < 96) {
         sampler.step(4);
         setImmediate(refine);
         return;
