@@ -25,6 +25,10 @@ export const P = {
   affordK: 1, // k <= balance/medianPrice + affordK (0 = off)
   maxFrac: 0.35, // max share of balance on one tile while > paceLeft auctions remain (1 = off)
   paceLeft: 15,
+  earlyCap: 0, // max coins spent in first third (0 = off)
+  earlyShade: 0, // subtract from bids in first third
+  vowelBonus: 0, // points added to a vowel's value when rack vowel share < vowelTarget
+  vowelTarget: 0.4,
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
   denySeats: 99, // add rival-denial value (vs score leader) when seats <= this
   denyW: 0.6, // weight on rival's marginal value
@@ -63,6 +67,7 @@ export interface View {
   vHist: number[]; // my recent letter values this match
   rivalRacks?: Int8Array[]; // known tiles held by each rival (same order as rivals)
   rivalHidden?: number[]; // unrevealed starting tiles per rival
+  mySpent?: number; // coins paid for tiles so far this match
 }
 
 // Deterministic-ish RNG
@@ -253,6 +258,11 @@ export function chooseBid(v: View, value: number, lam: number): number {
     }
     value += P.denyW * rivalValue(v, bi, P.denySamples);
   }
+  if (P.vowelBonus > 0 && VOWEL.has(v.letter)) {
+    let tot = 0, vow = 0;
+    for (let L = 0; L < 26; L++) { tot += v.rack[L]; if (VOWEL.has(L)) vow += v.rack[L]; }
+    if (tot === 0 || vow / tot < P.vowelTarget) value += P.vowelBonus;
+  }
   if (v.balance <= 0 || value <= 0) return 0;
   let truthful = value / lam;
   let bid: number;
@@ -286,6 +296,9 @@ export function chooseBid(v: View, value: number, lam: number): number {
   const cap = rivalCap(v) + 1;
   bid = Math.min(bid, cap, v.balance);
   if (v.futureAuctions > P.paceLeft) bid = Math.min(bid, Math.max(1, Math.floor(v.balance * P.maxFrac)));
+  const early = v.totalAuctions - v.futureAuctions < v.totalAuctions / 3;
+  if (early && P.earlyShade > 0) bid = Math.max(0, bid - P.earlyShade);
+  if (early && P.earlyCap > 0 && v.mySpent !== undefined) bid = Math.min(bid, Math.max(0, P.earlyCap - v.mySpent));
   return Math.max(0, bid);
 }
 

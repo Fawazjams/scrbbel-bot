@@ -108,12 +108,13 @@ function buildView(matchId: bigint, letterIdx: number): View | null {
   };
   const unseen = Int16Array.from(BAG_COUNTS);
   let myWins = 0;
+  let mySpent = 0;
   const prices: number[] = [];
   for (const r of results) {
     unseen[li(r.letter)]--;
     if (r.winnerBotId !== undefined && r.winnerBotId !== null) {
       get(won, r.winnerBotId)[li(r.letter)]++;
-      if (r.winnerBotId === myBotId) myWins++;
+      if (r.winnerBotId === myBotId) { myWins++; mySpent += Number(r.paid); }
       prices.push(Number(r.paid));
     }
   }
@@ -167,6 +168,7 @@ function buildView(matchId: bigint, letterIdx: number): View | null {
     vHist: vHistByMatch.get(key)!,
     rivalRacks,
     rivalHidden,
+    mySpent,
   };
 }
 
