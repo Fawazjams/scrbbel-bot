@@ -133,6 +133,7 @@ function buildView(matchId: bigint, letterIdx: number): View | null {
     for (let L = 0; L < 26; L++) unseen[L] -= Math.max(0, p[L] - w[L]); // revealed starters
   }
   for (let L = 0; L < 26; L++) if (unseen[L] < 0) unseen[L] = 0;
+  const rackSize = Number((st as any).startingRackSize ?? 5);
   const rivalRacks: Int8Array[] = [];
   const rivalHidden: number[] = [];
   for (const r of rivals) {
@@ -145,7 +146,7 @@ function buildView(matchId: bigint, letterIdx: number): View | null {
       revealed += Math.max(0, p[L] - w[L]);
     }
     rivalRacks.push(rr);
-    rivalHidden.push(Math.max(0, 5 - revealed));
+    rivalHidden.push(Math.max(0, rackSize - revealed));
   }
   const seats = parts.length;
   const key = String(matchId);
@@ -158,7 +159,7 @@ function buildView(matchId: bigint, letterIdx: number): View | null {
     rivals,
     unseen,
     futureAuctions: st.bagTotal,
-    totalAuctions: Math.max(1, 98 - 5 * seats),
+    totalAuctions: Math.max(1, 98 - rackSize * seats),
     auctionsDone: results.length,
     myWins,
     firstPrice: st.auctionType.tag === "FirstPrice",
