@@ -1,5 +1,8 @@
 // Decision engine: Monte Carlo letter value, coin shadow price (lambda),
 // bid choice, play/hold. Original implementation for the SCRBBEL bot.
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { BAG_COUNTS, LETTER_VALUE, VOWEL, partitionValue, formable, bestPartition, type Rack } from "./words.js";
 
 // Tunable parameters (overridable via PARAMS_JSON env or setParams()).
@@ -10,11 +13,15 @@ export const P = {
   spendMult: 1.14, // bid scale used in spend model
   lamMult: 1.08,
   bigTableLam: 0.8, // lambda scale at 7+ seats
-  topPremium: 1.25, // top rival bid ~= paid * topPremium + 1
-  holdMargin: 2.7, // play word only if it beats holding by this
+    holdMargin: 2.7, // play word only if it beats holding by this
   coinBonus: 0.32, // value of reward as coins (x lambda)
   fpShade: 1, // first-price: 1 = optimize vs prices
   partTopN: 6,
+  drainFrac: 0.7, // heads-up / small tables: bid >= drainFrac * median price
+  drainSeats: 3, // apply drain when seats <= this
+  drainMinBal: 15,
+  topAdd: 4, // winner bid ~ paid + topAdd
+  marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
 };
 export function setParams(o: Partial<typeof P>) {
   Object.assign(P, o);
@@ -113,18 +120,62 @@ export class Sampler {
 
 const PRIOR_PRICES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
 
+// Scouted market: top rival bid quantiles by letter group and phase.
+type Q = { p25: number; p50: number; p75: number; p90: number };
+let MARKET: Record<string, Q> = {};
+try {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  MARKET = JSON.parse(fs.readFileSync(path.join(here, "..", "data", "market.json"), "utf8")).top_bid_by_group_phase;
+} catch {}
+function group(L: number): string {
+  const f = LETTER_VALUE[L];
+  return f <= 1 ? "1" : f <= 3 ? "2-3" : f <= 5 ? "4-5" : "8-10";
+}
+function phase(v: View): string {
+  const done = v.totalAuctions - v.futureAuctions;
+  const fr = done / Math.max(1, v.totalAuctions);
+  return fr < 1 / 3 ? "early" : fr < 2 / 3 ? "mid" : "late";
+}
+function marketQuantiles(L: number, ph: string): number[] | null {
+  const q = MARKET[`${group(L)}|${ph}`];
+  if (!q) return null;
+  // rough 8-point distribution from quantiles
+  return [q.p25 * 0.85, q.p25, (q.p25 + q.p50) / 2, q.p50, (q.p50 + q.p75) / 2, q.p75, q.p90, q.p90 * 1.15];
+}
+// Thresholds (bid needed to beat all rivals) for a given letter.
+export function thresholds(v: View, L: number): number[] {
+  const allReal = v.rivals.length > 0 && v.rivals.every((r) => !r.sim);
+  const obs = v.prices.slice(-30).map((p) => p + P.topAdd);
+  const mk = allReal && P.marketWeight > 0 ? marketQuantiles(L, phase(v)) : null;
+  if (mk && obs.length < 10) return [...mk, ...obs];
+  if (mk) {
+    const reps = Math.max(1, Math.round(P.marketWeight * 2));
+    const out = [...obs];
+    for (let i = 0; i < reps; i++) out.push(...mk);
+    return out;
+  }
+  return obs.length >= 6 ? obs : [...obs, ...PRIOR_PRICES];
+}
+
 // Solve lambda (points per coin) so that expected future spend ~= budget.
 export function solveLambda(v: View, curValue: number, ep: number): number {
   const R = v.futureAuctions + 1;
   const budget = v.balance + P.incomeFrac * ep * (v.futureAuctions / Math.max(1, v.totalAuctions));
   const vs = v.vHist.length >= 6 ? v.vHist.slice(-30) : [...v.vHist, curValue, 3, 2, 5, 1, 6, 0, 4];
-  const ps = v.prices.length >= 8 ? v.prices.slice(-40) : [...v.prices, ...PRIOR_PRICES];
-  // paid = runner-up bid; the bid we must beat (top rival) is higher.
+  // thresholds for a typical future letter, weighted by the unseen pool
+  const ps: number[] = [];
+  for (let L = 0; L < 26; L++) {
+    const n = v.unseen[L];
+    if (n <= 0) continue;
+    const th = thresholds(v, L);
+    for (let i = 0; i < Math.min(n, 4); i++) ps.push(...th);
+  }
+  if (!ps.length) ps.push(...PRIOR_PRICES);
   const spend = (lam: number) => {
     let tot = 0;
     for (const x of vs) {
       const b = (P.spendMult * x) / lam;
-      for (const p of ps) if (b > p * P.topPremium + 1) tot += p;
+      for (const p of ps) if (b > p) tot += p;
     }
     return (R * tot) / (vs.length * ps.length);
   };
@@ -165,7 +216,7 @@ export function chooseBid(v: View, value: number, lam: number): number {
   let bid: number;
   if (v.firstPrice) {
     // maximize (truthful - b) * P(maxRival < b) using observed prices
-    const ps = v.prices.length >= 8 ? v.prices.slice(-40) : [...v.prices, ...PRIOR_PRICES];
+    const ps = thresholds(v, v.letter);
     let best = 0;
     let bestU = 0;
     const top = Math.min(Math.floor(truthful), v.balance);
@@ -181,6 +232,14 @@ export function chooseBid(v: View, value: number, lam: number): number {
     bid = best;
   } else {
     bid = Math.round(truthful);
+  }
+  // Small tables: price-drain floor so rivals overpay for what they win.
+  const seats = v.rivals.length + 1;
+  if (!v.firstPrice && seats <= P.drainSeats && v.balance >= P.drainMinBal && v.futureAuctions > 1) {
+    const ps = v.prices.length >= 5 ? v.prices.slice(-25) : [...v.prices, ...PRIOR_PRICES];
+    const sorted = [...ps].sort((a, b) => a - b);
+    const med = sorted[sorted.length >> 1];
+    bid = Math.max(bid, Math.floor(P.drainFrac * med));
   }
   const cap = rivalCap(v) + 1;
   bid = Math.min(bid, cap, v.balance);

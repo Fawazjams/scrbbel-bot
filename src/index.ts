@@ -195,7 +195,7 @@ function onAuction(a: any) {
   // k: usable future tiles (the final auction's tile is unusable)
   const k = futuresK({ ...view, futureAuctions: view.futureAuctions - 1 });
   const sampler = new Sampler(view, k);
-  sampler.step(6);
+  sampler.step(Number(process.env.QUICK_SAMPLES ?? 12));
   let lam = solveLambda(view, sampler.value(), sampler.ep());
   const quick = chooseBid(view, sampler.value(), lam);
   sendBid(a.id, a.matchId, quick, "quick");
