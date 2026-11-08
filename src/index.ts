@@ -11,7 +11,24 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadWords, li, wordReward, BAG_COUNTS } from "./words.js";
-import { Sampler, chooseBid, futuresK, playOrHold, solveLambda, type Rival, type View } from "./brain.js";
+import { Sampler, chooseBid, futuresK, playOrHold, solveLambda, setParams, P, type Rival, type View } from "./brain.js";
+
+// Live A/B: AB_VARIANTS='[{"name":"A"},{"name":"B","marketWeight":0}]' rotates per match.
+const BASE_P = { ...P };
+const VARIANTS: any[] = process.env.AB_VARIANTS ? JSON.parse(process.env.AB_VARIANTS) : [];
+let matchCount = 0;
+const variantByMatch = new Map<string, string>();
+function pickVariant(matchId: bigint) {
+  if (!VARIANTS.length) return;
+  const key = String(matchId);
+  if (variantByMatch.has(key)) return;
+  const v = VARIANTS[matchCount++ % VARIANTS.length];
+  Object.assign(P, BASE_P);
+  const { name, ...params } = v;
+  setParams(params);
+  variantByMatch.set(key, name);
+  log({ ev: "variant", m: matchId, name, params });
+}
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
@@ -258,6 +275,7 @@ function ensureMatchSub(matchId: bigint) {
       const st = conn.db.matchState.id.find(matchId);
       if (st && st.status.tag === "Ended") return;
       log({ ev: "match-sub", m: matchId });
+      pickVariant(matchId);
       for (const a of conn.db.auction.iter()) if (a.matchId === matchId) onAuction(a);
     })
     .onError((_c: any) => log({ ev: "fail", what: `match sub ${matchId}` }))
@@ -317,7 +335,7 @@ function onMatchEnded(st: any) {
   if (!me) return;
   const sorted = [...parts].sort((x, y) => Number(y.score - x.score));
   const place = sorted.findIndex((p) => p.botId === myBotId) + 1;
-  log({ ev: "match-end", m: st.id, place, seats: parts.length, score: me.score, bal: me.balance, scores: sorted.map((p) => Number(p.score)) });
+  log({ ev: "match-end", variant: variantByMatch.get(String(st.id)), m: st.id, place, seats: parts.length, score: me.score, bal: me.balance, scores: sorted.map((p) => Number(p.score)) });
   setTimeout(maybeJoinLobby, 500);
 }
 
