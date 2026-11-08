@@ -22,6 +22,9 @@ export const P = {
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
   fpTopAdd: 0,
+  affordK: 1, // k <= balance/medianPrice + affordK (0 = off)
+  maxFrac: 0.35, // max share of balance on one tile while > paceLeft auctions remain (1 = off)
+  paceLeft: 15,
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
   denySeats: 99, // add rival-denial value (vs score leader) when seats <= this
   denyW: 0.6, // weight on rival's marginal value
@@ -92,7 +95,15 @@ export function futuresK(v: View): number {
   const seats = v.rivals.length + 1;
   const winRate = (v.myWins + 1.5) / (v.auctionsDone + seats * 1.5);
   const expWins = winRate * R;
-  return Math.max(0, Math.min(Math.round(P.kMult * expWins), P.kMax, R));
+  let k = Math.max(0, Math.min(Math.round(P.kMult * expWins), P.kMax, R));
+  // Only count tiles we can afford: balance / typical clearing price (+1 for income).
+  if (P.affordK > 0) {
+    const th = thresholds(v, v.letter).slice().sort((a, b) => a - b);
+    const med = Math.max(1, th[th.length >> 1] ?? 10);
+    const afford = Math.floor(v.balance / med) + P.affordK;
+    k = Math.min(k, afford);
+  }
+  return k;
 }
 
 export class Sampler {
@@ -274,6 +285,7 @@ export function chooseBid(v: View, value: number, lam: number): number {
   }
   const cap = rivalCap(v) + 1;
   bid = Math.min(bid, cap, v.balance);
+  if (v.futureAuctions > P.paceLeft) bid = Math.min(bid, Math.max(1, Math.floor(v.balance * P.maxFrac)));
   return Math.max(0, bid);
 }
 
