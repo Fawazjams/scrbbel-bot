@@ -237,7 +237,7 @@ function onAuction(a: any) {
   sendBid(a.id, a.matchId, quick, "quick");
 
   // play/hold check (may raise balance before refine)
-  const pw = playOrHold(view.rack, view.unseen, k, lam, 10, false);
+  const pw = playOrHold(view.rack, view.unseen, k, lam, 10, false, view.futureAuctions);
   if (pw) playWords(a.matchId, pw, view, "hold-check");
 
   const refine = () => {

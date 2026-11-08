@@ -22,6 +22,8 @@ export const P = {
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
   fpTopAdd: 0,
+  lateLeft: 10, // cash a word of >= lateMinLen letters when <= lateLeft auctions remain (0 = off)
+  lateMinLen: 5,
   kBudget: 0, // k >= kBudget*balance/medianPrice (0 = off)
   affordK: 1, // k <= balance/medianPrice + affordK (0 = off)
   maxFrac: 0.35, // max share of balance on one tile while > paceLeft auctions remain (1 = off)
@@ -313,6 +315,7 @@ export function playOrHold(
   lam: number,
   samples: number,
   final: boolean,
+  futureAuctions = 99,
 ): string[] | null {
   if (final) {
     const bp = bestPartition(rack);
@@ -321,6 +324,11 @@ export function playOrHold(
   const cands = formable(rack, 2);
   if (!cands.length) return null;
   cands.sort((a, b) => b.reward - a.reward);
+  // Late: cash a solid word now so its coins come back while there are auctions left to spend them.
+  if (P.lateLeft > 0 && futureAuctions <= P.lateLeft && futureAuctions >= 2) {
+    const best = cands.reduce((a, b) => (b.word.length >= P.lateMinLen && b.reward > (a?.reward ?? -1) ? b : a), null as any);
+    if (best && best.word.length >= P.lateMinLen) return [best.word];
+  }
   const top = cands.slice(0, 6);
   const futures: Int8Array[] = [];
   for (let s = 0; s < samples; s++) futures.push(k > 0 ? (sampleFuture(unseen, k) as Int8Array) : new Int8Array(26));
