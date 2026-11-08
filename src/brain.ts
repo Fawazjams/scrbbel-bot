@@ -25,7 +25,7 @@ export const P = {
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
   denySeats: 99, // add rival-denial value (vs score leader) when seats <= this
   denyW: 0.6, // weight on rival's marginal value
-  huLam: 0.7, // lambda multiplier (replaces lamMult) at <= denySeats seats
+  huLam: 1.0, // lambda multiplier (replaces lamMult) at <= denySeats seats
   denySamples: 16,
 };
 export function setParams(o: Partial<typeof P>) {
