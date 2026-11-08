@@ -21,6 +21,7 @@ export const P = {
   drainSeats: 3, // apply drain when seats <= this
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
+  fpTopAdd: 0,
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
   denySeats: 99, // add rival-denial value (vs score leader) when seats <= this
   denyW: 0.6, // weight on rival's marginal value
@@ -151,7 +152,9 @@ function marketQuantiles(L: number, ph: string): number[] | null {
 // Thresholds (bid needed to beat all rivals) for a given letter.
 export function thresholds(v: View, L: number): number[] {
   const allReal = v.rivals.length > 0 && v.rivals.every((r) => !r.sim);
-  const obs = v.prices.slice(-30).map((p) => p + P.topAdd);
+  // Vickrey: paid = runner-up bid, winner was higher. First-price: paid = winning bid.
+  const add = v.firstPrice ? P.fpTopAdd : P.topAdd;
+  const obs = v.prices.slice(-30).map((p) => p + add);
   const mk = allReal && P.marketWeight > 0 ? marketQuantiles(L, phase(v)) : null;
   if (mk && obs.length < 10) return [...mk, ...obs];
   if (mk) {
