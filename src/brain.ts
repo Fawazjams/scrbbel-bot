@@ -22,8 +22,9 @@ export const P = {
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
-  denySeats: 2, // add rival-denial value when seats <= this
-  denyW: 1, // weight on rival's marginal value
+  denySeats: 3, // add rival-denial value when seats <= this
+  denyW: 0.6, // weight on rival's marginal value
+  huLam: 0.7, // lambda multiplier (replaces lamMult) at <= denySeats seats
   denySamples: 16,
 };
 export function setParams(o: Partial<typeof P>) {
@@ -195,6 +196,7 @@ export function solveLambda(v: View, curValue: number, ep: number): number {
   }
   let lam = Math.exp((lo + hi) / 2) * P.lamMult;
   if (v.rivals.length + 1 >= 7) lam *= P.bigTableLam;
+  if (v.rivals.length + 1 <= P.denySeats) lam = (lam / P.lamMult) * P.huLam;
   return lam;
 }
 
@@ -229,7 +231,13 @@ export function rivalValue(v: View, i: number, samples: number): number {
 
 export function chooseBid(v: View, value: number, lam: number): number {
   if (v.rivals.length + 1 <= P.denySeats && v.rivalRacks && v.futureAuctions > 0) {
-    value += P.denyW * rivalValue(v, 0, P.denySamples);
+    // deny the strongest rival (highest score; ties -> most balance)
+    let bi = 0;
+    for (let i = 1; i < v.rivals.length; i++) {
+      const a = v.rivals[i], b = v.rivals[bi];
+      if (a.score > b.score || (a.score === b.score && a.balance > b.balance)) bi = i;
+    }
+    value += P.denyW * rivalValue(v, bi, P.denySamples);
   }
   if (v.balance <= 0 || value <= 0) return 0;
   let truthful = value / lam;
