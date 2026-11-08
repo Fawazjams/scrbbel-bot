@@ -22,6 +22,9 @@ export const P = {
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
   marketWeight: 1, // weight of scouted market prior vs observed (all-real tables)
+  denySeats: 2, // add rival-denial value when seats <= this
+  denyW: 1, // weight on rival's marginal value
+  denySamples: 16,
 };
 export function setParams(o: Partial<typeof P>) {
   Object.assign(P, o);
@@ -53,6 +56,8 @@ export interface View {
   firstPrice: boolean;
   prices: number[]; // observed paid prices this match (winner present)
   vHist: number[]; // my recent letter values this match
+  rivalRacks?: Int8Array[]; // known tiles held by each rival (same order as rivals)
+  rivalHidden?: number[]; // unrevealed starting tiles per rival
 }
 
 // Deterministic-ish RNG
@@ -210,7 +215,22 @@ export function rivalCap(v: View): number {
   return cap;
 }
 
+// Marginal value of the current letter to rival i (heads-up denial).
+export function rivalValue(v: View, i: number, samples: number): number {
+  if (!v.rivalRacks || !v.rivalRacks[i]) return 0;
+  const hidden = v.rivalHidden?.[i] ?? 0;
+  const seats = v.rivals.length + 1;
+  const kr = Math.max(0, Math.min(Math.round((v.futureAuctions - 1) / seats), P.kMax));
+  const rv: View = { ...v, rack: v.rivalRacks[i] };
+  const s = new Sampler(rv, hidden + kr);
+  s.step(samples);
+  return Math.max(0, s.value());
+}
+
 export function chooseBid(v: View, value: number, lam: number): number {
+  if (v.rivals.length + 1 <= P.denySeats && v.rivalRacks && v.futureAuctions > 0) {
+    value += P.denyW * rivalValue(v, 0, P.denySamples);
+  }
   if (v.balance <= 0 || value <= 0) return 0;
   let truthful = value / lam;
   let bid: number;
