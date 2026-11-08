@@ -22,6 +22,7 @@ export const P = {
   drainMinBal: 15,
   topAdd: 4, // winner bid ~ paid + topAdd
   fpTopAdd: 0,
+  kBudget: 0, // k >= kBudget*balance/medianPrice (0 = off)
   affordK: 1, // k <= balance/medianPrice + affordK (0 = off)
   maxFrac: 0.35, // max share of balance on one tile while > paceLeft auctions remain (1 = off)
   paceLeft: 15,
@@ -107,6 +108,8 @@ export function futuresK(v: View): number {
     const med = Math.max(1, th[th.length >> 1] ?? 10);
     const afford = Math.floor(v.balance / med) + P.affordK;
     k = Math.min(k, afford);
+    // Budget-driven floor: if we can afford more tiles than our win history suggests, plan to buy them.
+    if (P.kBudget > 0) k = Math.max(k, Math.min(Math.floor((P.kBudget * v.balance) / med), R, P.kMax));
   }
   return k;
 }
